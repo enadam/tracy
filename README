@@ -1,0 +1,4 @@
+libtracy.c	library source code
+tracinst	convenience script to install tracy
+tracy		convenience script to run your program with tracy
+ares.pl		postprocessor to resolve addresses of quick mode output

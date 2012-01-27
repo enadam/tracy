@@ -1,0 +1,33 @@
+ -- keep only certain chains, matching a pattern:
+    -- contains/does not contain given functions
+    -- chain is shorter/longer than
+
+ -- eliminate frames:
+    -- level range
+    -- from/up to the first/last match/unmatch of functions += offset
+    -- individual frame matches/unmatches given functions
+
+ -- for hidden leafs: offer to hide with vim markers
+
+ -- some vim magic to automagically mark up all the input
+
+call graph:
+  get next chain, throw away if doesn't match
+  decide which parts of the chain to log
+  floor rules: optimization
+
+frame1
+frame1 | frame2
+frame1 | frame2 | frame3
+frame1 | frame2 | frame3 | frame4
+frame1 | frame2 | frame3 | frame4 | frame5
+
+ -- remove undesirable frames: pretend they don't exist
+ -- log/don't log chain:
+    a) lie abou levels
+    b) log ancestors
+ -- what to do about the children of the newly pushed frame?
+    a) fold them up?
+    b) remove them?
+       -- optionally: provide statistics?
+ -- optionally: convert zero-child to CALL

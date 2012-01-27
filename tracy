@@ -1,0 +1,141 @@
+#!/bin/sh
+#
+# tracy -- trace instrumented parts of a program with libtracy
+#
+# Synopsis: tracy [{-lib|-nolib} <libraries>] [{-fun|-nofun} <functions>]
+#		  [-depth <depth>] [-quick] <prog> [<args>]...
+#
+# -lib   <libraries>: sets $TRACY_INLIBS, e.g. "libalpha.so:libbeta.so".
+# -nolib <libraries>: sets $TRACY_EXLIBS
+# -fun   <functions>: sets $TRACY_INFUNS, e.g. "foo_*:bar_*:baz_(alpha:beta)"
+# -nofun <functions>: sets $TRACY_EXFUNS
+# -depth <limit>:     sets $TRACY_MAXDEPTH
+# -quick:             to make it faster don't resolve symbols real time;
+#                     makes -*lib and -*fun ineffective
+# -time, -pid:        log the time of the call/return and the PID/TID
+#                     of the program respectively
+#
+# See libtracy.c.
+#
+# Usage: compile the relevant files of your program with -finstrument-functions,
+# then run it with tracy.
+#
+
+# Parse the command line and set $TRACY_*.
+while :;
+do
+	if [ $# -eq 0 ];
+	then
+		echo "usage: $0" \
+			"[{-lib|-nolib} <libraries>]" \
+	       		"[{-fun|-nofun} <functions>]" \
+			"[-depth <depth>] [-quick]" \
+			"<prog> [<args>]...";
+		exit 0;
+	fi
+
+	case "$1" in
+	-lib*)
+		shift;
+		TRACY_INLIBS="$1";
+		TRACY_EXLIBS="";
+		;;
+	-nolib*)
+		shift;
+		TRACY_INLIBS="";
+		TRACY_EXLIBS="$1";
+		;;
+	-fun*)
+		shift;
+		TRACY_INFUNS="$1";
+		TRACY_EXFUNS="";
+		;;
+	-nofun*)
+		shift;
+		TRACY_INFUNS="";
+		TRACY_EXFUNS="$1";
+		;;
+	-depth)
+		shift;
+		TRACY_MAXDEPTH="$1";
+		;;
+	-quick)
+		TRACY_ASYNC=1;
+		;;
+	-time)
+		TRACY_LOG_TIME=1;
+		;;
+	-pid)
+		TRACY_LOG_TID=1;
+		;;
+	-*)
+		# Print the usage message.
+		set --;
+		;;
+	*)
+		break;
+		;;
+	esac
+
+	shift;
+done
+
+if [ "$TRACY_INFUNS" -o "$TRACY_EXFUNS" \
+	-o "$TRACY_INLIBS" -o "$TRACY_EXLIBS" ];
+then
+	[ $TRACY_QUICK = 1 ] \
+		&& echo "tracy: cannot restrict the trace in -quick mode" >&2;
+fi
+
+export TRACY_INFUNS TRACY_EXFUNS;
+export TRACY_INLIBS TRACY_EXLIBS;
+export TRACY_MAXDEPTH TRACY_ASYNC;
+export TRACY_LOG_TIME TRACY_LOG_TID;
+
+# Find libtracy and set $tracelib.
+instdir=""; # Set by tracinst.
+tracelib="";
+
+for lib in "$instdir" . "$HOME/lib/tracy" "$HOME/lib" \
+	/root /tmp /usr/local/lib /usr/lib;
+do
+	if [ "$lib" = "" ];
+	then	# Empty $instdir.
+		continue;
+	elif [ -f "$lib/libtracy.so" ];
+	then
+		tracelib="$lib/libtracy.so";
+		break;
+	fi
+done
+
+if [ "$tracelib" = "" ];
+then
+	echo "$0: could not find $so." >&2;
+	exit 1;
+fi
+
+# Add $tracelib to $LD_PRELOAD.
+if [ "$LD_PRELOAD" = "" ];
+then
+	LD_PRELOAD="$tracelib";
+else
+	LD_PRELOAD="$LD_PRELOAD:$tracelib";
+fi
+
+# Make it work in scratchbox, only for target binaries.
+case "$SBOX_PRELOAD" in
+*,*)
+	SBOX_PRELOAD="$SBOX_PRELOAD:$tracelib";
+	;;
+*)
+	SBOX_PRELOAD="$SBOX_PRELOAD,$tracelib";
+	;;
+esac
+
+export LD_PRELOAD SBOX_PRELOAD;
+
+# Go
+exec "$@";
+
+# End of tracy

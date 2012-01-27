@@ -1,0 +1,72 @@
+#!/bin/bash
+#
+# tracinst -- installs tracy and libtracy.so
+#
+# Synopsis: tracinst [-glib] [<bindir> [<libdir]]
+#
+# -glib:  print tracing message with g_debug(), otherwise use stderr
+# bindir: where to place the utility program
+# libdir: where to place the tracing library
+#
+# If both <bindir> and <libdir> are left unspecified they default to
+# $HOME/bin and $HOME/lib.  Otherwise <libdir> defaults to be the same
+# as <bindir>.
+#
+
+# Parse the command line.
+bin="";
+lib="";
+
+if [ "x$1" = "x-glib" ];
+then
+	use_glib="-DCONFIG_GLIB `pkg-config --cflags --libs glib-2.0`";
+	shift;
+else
+	use_glib="";
+fi
+
+if [ $# -gt 0 ];
+then
+	bin="$1";
+	shift;
+fi
+
+if [ $# -gt 0 ];
+then
+	lib="$1";
+	shift;
+fi
+
+if [ "$bin" = "" ];
+then
+	bin="$HOME/bin";
+	lib="$HOME/lib";
+elif [ "$lib" = "" ];
+then
+	lib="$bin";
+fi
+
+# Determine the library basename.  Include the CPU in the name
+# to make it easier to use in scratchbox.  
+cpu=`uname -m`;
+so="libtracy-$cpu.so";
+
+# Find our directory.
+me="${0%/*}";
+[ "$me" != "" ] || me=".";
+
+set -e;
+[ -d "$bin" ] || mkdir "$bin";
+[ -d "$lib" ] || mkdir "$lib";
+
+# Compile libtracy.c and copy the files where they belong.
+# Take care not to overwrite `tracy' if $bin happens to be $me.
+gcc -Wall -shared -g -ldl $use_glib "$me/libtracy.c" -o "$lib/$so"
+ln -sf "$so" "$lib/libtracy.so";
+chmod -x "$lib/$so";
+[ "$me/tracy" -ef "$bin/tracy" ]
+	|| sed -e "s!^instdir=.*\$!instdir=\"$lib\";!" \
+		< "$me/tracy" > "$bin/tracy";
+chmod +x "$bin/tracy";
+
+# End of tracinst
