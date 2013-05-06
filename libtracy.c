@@ -16,15 +16,18 @@
  * make them so by default (save for the performance penalty).
  *
  * You can limit the amount of information printed during tracing by setting
- * these environment variables (`tracy' is a convenienve frontend for that):
+ * these environment variables (`tracy' is a convenience frontend for that):
  *
+ * -- $TRACY_SIGNAL:	If 'y' or a signal number then only start tracing
+ *			when SIGPROF or that specified signal is caught.
+ *			Getting the same signal toggles tracing off again.
  * -- $TRACY_INLIBS:	A colon-separated list of basenames indicating
  *			calls to which DSOs to include in the output.
  *			Calls to DSOs not in this list will be omitted.
  *			Example: "libalpha.so:libbeta.so".
  * -- $TRACY_EXLIBS:	Likewise, but tells calls to which DSOs to exclude.
  *			In case both environment variables are defined
- *			$TRACY_INLIBS take precedence.
+ *			$TRACY_INLIBS takes precedence.
  * -- $TRACY_INFUNS:	An extended glob pattern specifying which functions
  *			to report about.  Behaves similarly to $TRACY_INLIBS.
  *			Beyond '*' and '?' in an extended glob pattern you
@@ -42,10 +45,17 @@
  *			libtracy will emit symbols addresses then a
  *			transformation table on exit().  You can resolve
  *			the symbol names with ares.pl afterwards.
+ * -- $TRACY_LOG_ENTRIES_ONLY:
+ *			Log only function entries.  This only unclutters output,
+ *			but doesn't save much processing time.
  * -- $TRACY_LOG_TIME:	Include gettimeofday() of the call/return in the output.
  * -- $TRACY_LOG_TID:	Include the TID of the traced program in the output.
  *			Useful when you're tracing multiprocess/multithread
- *			programs.
+ *			programs.  WARNING: libtracy is NOT thread-safe!
+ * -- $TRACY_LOG_FNAME:	Include the DSO's basename in the output (default).
+ * -- $TRACY_LOG_INDENT: How many spaces to indent with each call level.
+ *			 The default is 0, ie. start function names at the same
+ *			 column in each call level.
  *
  * Compile this file as a shared library, but don't instrument it.
  * Specify -DCONFIG_GLIB to have it report with g_debug() (the log domain
@@ -74,6 +84,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <signal.h>
 
 #include <elf.h>
 #include <execinfo.h>
@@ -140,6 +151,9 @@ struct dso_st
 static int match_eglob(char const *pattern, char const *str);
 
 /* Private variables */
+/* Is tracing enabled or are we waiting for a signal to start it? */
+static int Tracing = 1;
+
 /* Printed along with the trace messages. */
 static unsigned int Callstack_depth = 0;
 
@@ -507,7 +521,8 @@ static char const *report_dso(char const *fname)
 	return (!(base = strrchr(fname, '/'))) ? fname : base + 1;
 } /* report_dso */
 
-/* Returns whether to report a call to $funame, which may be NULL. */
+/* Returns whether to report a call to $funame.  If $funame is NULL,
+ * returns 0 if there's whitelisting. */
 static int report_function(char const *funame)
 {
 	static int report_all = 0;
@@ -684,8 +699,10 @@ static void resolve_backlog(void)
 static int print_trace(void *addr, char const *dir)
 {
 	static unsigned depth_limit;
-	static int depth_limited = -1, be_async = -1;
-	char const *env, *fname, *funame;
+	static int depth_limited = -1, be_async = -1, entries_only = -1;
+	static int indent = -1, log_fname = -1;
+	char const *env, *colon, *fname, *funame;
+	int is_entry, success;
 
 	/* Read $TRACY_MAXDEPTH if we haven't. */
 	if (depth_limited < 0)
@@ -713,13 +730,13 @@ static int print_trace(void *addr, char const *dir)
 		 * [2] the function we're interested in.
 		 *
 		 * On ARM backtrace() is unreliable, so use $addr directly.
-		 * On x86 we can avoid this call.
+		 * On x86 we can't avoid this call.
 		 */
 		if (backtrace(addrs, 3) < 3)
 			return 1;
 		addr = addrs[2];
 	}
-#endif
+#endif /* ! __ARMEL__ */
 
 	/* In async mode create a temporary file where we can write symbol
 	 * addresses the program encounters on function calls enters. */
@@ -740,49 +757,109 @@ static int print_trace(void *addr, char const *dir)
 				atexit(resolve_backlog);
 			}
 		}
-	}
+	} /* be_async? */
 
+	/* Log only function entries? */
+	is_entry = dir[0] == 'E';
+	if (entries_only < 0)
+		entries_only = (env = getenv("TRACY_LOG_ENTRIES_ONLY"))
+			&& env[0] == '1';
+	if (entries_only)
+		dir = "";
+
+	/* Get how much to indent $fname:$funame. */
+	if (indent < 0)
+		indent = (env = getenv("TRACY_LOG_INDENT")) ? atoi(env) : 0;
+
+	/* Write the async file if necessary. */
 	if (Async_fd >= 0)
 	{	/* resolve_backlog() will resolve $addr when we exit. */
-		LOGIT("%s%s[%u] [%p]", procinfo(), dir, Callstack_depth, addr);
-		if (dir[0] == 'E')
+		if (!entries_only || is_entry)
+			LOGIT("%s%s[%u]%*s[%p]", procinfo(), dir,
+				Callstack_depth,
+				1 + indent*Callstack_depth, " ", addr);
+		if (is_entry)
 			/* Try not to bloat the file, it'll have
 			 * lots of identical entries anyway. */
 			write(Async_fd, &addr, sizeof(addr));
 		return 1;
 	}
 
-	switch (addr2name(&fname, &funame, addr))
-	{
-	case 1:
-		LOGIT("%s%s[%u] %s:%s()", procinfo(),
-			dir, Callstack_depth,
-			fname, funame);
-		return 1;
-	case 0:
-		LOGIT("%s%s[%u] %s:[%p]", procinfo(),
-		       	dir, Callstack_depth,
-			fname, addr);
-		return 1;
-	default:
+	/* Resolve $addr. */
+	if ((success = addr2name(&fname, &funame, addr)) < 0)
 		/* Omitted from output, don't count it in $Callstack_depth. */
 		return 0;
-	}
+
+	/* Don't log LEAVE:s if $entries_only. */
+	if (entries_only && !is_entry)
+		return 1;
+
+	/* Print or omit the "<$fname>:" in front of $funame? */
+	if (log_fname < 0)
+		log_fname = (env = getenv("TRACY_LOG_FNAME")) ? env[0] == '1' : 1;
+	if (log_fname)
+		colon = ":";
+	else
+		fname = colon = "";
+
+	/* Log the damn thing. */
+	if (success)
+		LOGIT("%s%s[%u]%*s%s%s%s()", procinfo(),
+			dir, Callstack_depth, 1 + indent*Callstack_depth, " ",
+			fname, colon, funame);
+	else
+		LOGIT("%s%s[%u]%*s%s%s[%p]", procinfo(),
+			dir, Callstack_depth, 1 + indent*Callstack_depth, " ",
+			fname, colon, addr);
+
+	/* We've logged something. */
+	return 1;
 } /* print_trace */
 
 /* The functions below are invoked automatically by code generated
  * by the compiler.  These are the entry points of the library. */
 void __cyg_profile_func_enter(void *self, void *callsite)
 {
+	if (!Tracing)
+		return;
 	if (print_trace(self, "ENTER"))
 		Callstack_depth++;
 }
 
 void __cyg_profile_func_exit(void *self, void *callsite)
 {
+	if (!Tracing)
+		return;
 	Callstack_depth--;
 	if (!print_trace(self, "LEAVE"))
 		Callstack_depth++;
+}
+/* }}} */
+
+/* Initialization {{{ */
+static void toggle_tracing(int signum)
+{
+	Tracing = !Tracing;
+}
+
+/* Start tracing or install a signal handler to start it later. */
+static __attribute__((constructor))
+void tracy_init(void)
+{
+   char const *env;
+
+   env = getenv("TRACY_SIGNAL");
+   if (env)
+   {
+	   int signum;
+
+	   if (env[0] == 'y' || env[0] == 'Y')
+		   signum = SIGPROF;
+	   else if ((signum = atoi(env)) <= 0)
+		   LOGIT("couldn't understand $TRACY_SIGNAL=%s", env);
+	   signal(signum, toggle_tracing);
+	   Tracing = 0;
+   }
 }
 /* }}} */
 

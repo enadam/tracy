@@ -3,17 +3,21 @@
 # tracy -- trace instrumented parts of a program with libtracy
 #
 # Synopsis: tracy [{-lib|-nolib} <libraries>] [{-fun|-nofun} <functions>]
-#		  [-depth <depth>] [-quick] <prog> [<args>]...
+#		  [-depth <depth>] [-wait] [-quick] <prog> [<args>]...
 #
-# -lib   <libraries>: sets $TRACY_INLIBS, e.g. "libalpha.so:libbeta.so".
-# -nolib <libraries>: sets $TRACY_EXLIBS
-# -fun   <functions>: sets $TRACY_INFUNS, e.g. "foo_*:bar_*:baz_(alpha:beta)"
-# -nofun <functions>: sets $TRACY_EXFUNS
-# -depth <limit>:     sets $TRACY_MAXDEPTH
-# -quick:             to make it faster don't resolve symbols real time;
-#                     makes -*lib and -*fun ineffective
-# -time, -pid:        log the time of the call/return and the PID/TID
-#                     of the program respectively
+# -lib   <libraries>:	Sets $TRACY_INLIBS, e.g. "libalpha.so:libbeta.so".
+# -nolib <libraries>:	Sets $TRACY_EXLIBS.
+# -fun   <functions>:	Sets $TRACY_INFUNS, e.g. "foo_*:bar_*:baz_(alpha:beta)".
+# -nofun <functions>:	sets $TRACY_EXFUNS
+# -depth <limit>:	Sets $TRACY_MAXDEPTH.
+# -wait:		Wait for SIGPROF to start tracing.
+# -quick:		To make it faster, don't resolve symbols real time;
+#			makes -*lib and -*fun ineffective.
+# -time, -pid:		Log the time of the call/return and the PID/TID
+#			of the program respectively.
+# -nofname:		Do not log the basename of the DSO of the reported
+#			function.
+# -xmas:		Change to output format to be indented by call depth.
 #
 # See libtracy.c.
 #
@@ -27,9 +31,11 @@ do
 	if [ $# -eq 0 ];
 	then
 		echo "usage: $0" \
-			"[{-lib|-nolib} <libraries>]" \
-	       		"[{-fun|-nofun} <functions>]" \
-			"[-depth <depth>] [-quick]" \
+			"[{-lib|-nolib} <libraries>] " \
+			"[{-fun|-nofun} <functions>] " \
+			"[-depth <depth>] [-wait] [-quick] " \
+			"[-time] [-pid] [-nofname] " \
+			"[-xmas] " \
 			"<prog> [<args>]...";
 		exit 0;
 	fi
@@ -59,6 +65,9 @@ do
 		shift;
 		TRACY_MAXDEPTH="$1";
 		;;
+	-wait)
+		TRACY_SIGNAL="y";
+		;;
 	-quick)
 		TRACY_ASYNC=1;
 		;;
@@ -67,6 +76,13 @@ do
 		;;
 	-pid)
 		TRACY_LOG_TID=1;
+		;;
+	-nofname)
+		TRACY_LOG_FNAME=0;
+		;;
+	-xmas)
+		TRACY_LOG_ENTRIES_ONLY=1;
+		TRACY_LOG_INDENT=1;
 		;;
 	-*)
 		# Print the usage message.
@@ -89,8 +105,9 @@ fi
 
 export TRACY_INFUNS TRACY_EXFUNS;
 export TRACY_INLIBS TRACY_EXLIBS;
-export TRACY_MAXDEPTH TRACY_ASYNC;
-export TRACY_LOG_TIME TRACY_LOG_TID;
+export TRACY_MAXDEPTH TRACY_SIGNAL TRACY_ASYNC;
+export TRACY_LOG_TIME TRACY_LOG_TID TRACY_LOG_FNAME;
+export TRACY_LOG_ENTRIES_ONLY TRACY_LOG_INDENT;
 
 # Find libtracy and set $tracelib.
 instdir=""; # Set by tracinst.
