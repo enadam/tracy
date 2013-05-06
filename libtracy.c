@@ -113,6 +113,19 @@
 #endif
 
 /* Type definitions {{{ */
+/* Use the appropriate ELF types for this platform. */
+#if __LP64__
+typedef Elf64_Ehdr Elf_Ehdr;
+typedef Elf64_Shdr Elf_Shdr;
+typedef Elf64_Addr Elf_Addr;
+typedef Elf64_Sym  Elf_Sym;
+#else /* we're 32-bit */
+typedef Elf32_Ehdr Elf_Ehdr;
+typedef Elf32_Shdr Elf_Shdr;
+typedef Elf32_Addr Elf_Addr;
+typedef Elf32_Sym  Elf_Sym;
+#endif
+
 /* Describes a word you can match against a path with match_words(). */
 struct word_st
 {
@@ -142,7 +155,7 @@ struct dso_st
 	 */
 	char const *fname;
 	char const *strtab, *strend;
-	Elf32_Sym const *symtab, *symend;
+	Elf_Sym const *symtab, *symend;
 	struct dso_st *next;
 };
 /* }}} */
@@ -225,7 +238,7 @@ static struct word_st *mkwords(char const *str)
 	/* Each basename in $str will be allocated a word_st. */
 	if (!(word = first = malloc(sizeof(*word))))
 	{
-		LOGIT("malloc(%u): %m", sizeof(*word));
+		LOGIT("malloc(%zu): %m", sizeof(*word));
 		return NULL;
 	}
 	word->word	= str;
@@ -242,7 +255,7 @@ static struct word_st *mkwords(char const *str)
 		{	/* New word */
 			if (!(word->next = malloc(sizeof(*word))))
 			{
-				LOGIT("malloc(%u): %m", sizeof(*word));
+				LOGIT("malloc(%zu): %m", sizeof(*word));
 				break;
 			}
 
@@ -363,7 +376,7 @@ static char const *getsym(struct dso_st const *dso,
 {
 	char const *name;
 	unsigned diff, now;
-	Elf32_Sym const *closest, *sym;
+	Elf_Sym const *closest, *sym;
 
 	/* $dso->symtab tells where the functions begin, but $addr
 	 * may point anywhere inside the function.  We need to find
@@ -372,7 +385,7 @@ static char const *getsym(struct dso_st const *dso,
 	closest = NULL;
 	for (sym = dso->symtab; sym < dso->symend; sym++)
 	{
-		Elf32_Addr eddr;
+		Elf_Addr eddr;
 
 		/*
 		 * In the symtabs of libraries and dlopen()ed DSOs there are
@@ -415,15 +428,27 @@ static char const *getsym(struct dso_st const *dso,
 static int getelf(struct dso_st *dso, void const *file)
 {
 	unsigned i;
-	Elf32_Ehdr const *elf;
-	Elf32_Shdr const *sec, *strsec, *symsec;
+	Elf_Ehdr const *elf;
+	Elf_Shdr const *sec, *strsec, *symsec;
 
-	/* Is it ELF at all?  NOTE that we're not 64bit-aware. */
+	/* Is it ELF at all? */
 	elf = file;
 	if (elf->e_ident[0] != ELFMAG0 || elf->e_ident[1] != ELFMAG1)
 		return 0;
 	if (elf->e_ident[2] != ELFMAG2 || elf->e_ident[3] != ELFMAG3)
 		return 0;
+
+	/* Are we using the appropriate ELF types for this DSO?  According to
+	 * the magic file the number of bits is encoded in e_ident. */
+#ifdef __LP64__
+	if (elf->e_ident[4] != 2)
+		/* We're 64-bit but the DSO is not. */
+		return 0;
+#else
+	if (elf->e_ident[4] != 1)
+		/* We're 32-bit but the DSO is not. */
+		return 0;
+#endif
 
 	/* Find the string and symbol tables. */
 	strsec = symsec = NULL;
@@ -436,7 +461,7 @@ static int getelf(struct dso_st *dso, void const *file)
 	/* Sanity checking. */
 	if (!strsec || !symsec)
 		return 0;
-	if (symsec->sh_entsize != sizeof(Elf32_Sym))
+	if (symsec->sh_entsize != sizeof(Elf_Sym))
 		return 0;
 
 	/* All is well, fill $dso. */
@@ -616,7 +641,7 @@ static int addr2name(char const **fnamep, char const **funamep,
 				seen = dso;
 			} else
 			{	/* Failed, clean up what getdso() did. */
-				LOGIT("malloc(%u): %m", sizeof(*dso));
+				LOGIT("malloc(%zu): %m", sizeof(*dso));
 				munmap((void *)file, fsize);
 				close(hfile);
 			}
