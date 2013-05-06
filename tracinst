@@ -61,10 +61,10 @@ set -e;
 
 # Compile libtracy.c and copy the files where they belong.
 # Take care not to overwrite `tracy' if $bin happens to be $me.
-gcc -Wall -shared -g -ldl $use_glib "$me/libtracy.c" -o "$lib/$so"
+gcc -Wall -shared -fPIC -g -ldl $use_glib "$me/libtracy.c" -o "$lib/$so"
 ln -sf "$so" "$lib/libtracy.so";
 chmod -x "$lib/$so";
-[ "$me/tracy" -ef "$bin/tracy" ]
+[ "$me/tracy" -ef "$bin/tracy" ] \
 	|| sed -e "s!^instdir=.*\$!instdir=\"$lib\";!" \
 		< "$me/tracy" > "$bin/tracy";
 chmod +x "$bin/tracy";

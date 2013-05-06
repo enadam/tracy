@@ -111,7 +111,7 @@ done
 
 if [ "$tracelib" = "" ];
 then
-	echo "$0: could not find $so." >&2;
+	echo "$0: could not find libtracy.so." >&2;
 	exit 1;
 fi
 
